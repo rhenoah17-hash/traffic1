@@ -3,26 +3,18 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Traffic Camera</title>
+    <title></title>
     <style>
-        body { margin:0; padding-bottom:24px; background:#111; color:#fff; font-family:Arial,sans-serif; text-align:center; }
-        header { padding:20px; background:#1c1c1c; font-size:24px; font-weight:bold; }
-        nav { padding:12px; }
-        nav a { color:#9de8ff; margin:0 8px; }
-        nav a.active { color:#00ff88; font-weight:bold; }
+        body { margin:0; background:#111; color:#fff; font-family:Arial,sans-serif; text-align:center; }
         #status { margin:15px; font-size:18px; color:orange; }
         .camera-container { width:95%; max-width:1000px; margin:auto; }
         #camera { width:100%; min-height:240px; max-height:75vh; object-fit:contain; background:#000; border:1px solid #333; }
-        #fps { margin-top:10px; color:#aaa; }
     </style>
 </head>
 <body>
-    <header id="title">Traffic Camera</header>
-    <nav id="camera-links"></nav>
     <div id="status">Connecting to server...</div>
     <div class="camera-container">
         <img id="camera" alt="Waiting for ESP32 camera">
-        <div id="fps">0 FPS</div>
     </div>
 
     <script>
@@ -30,21 +22,10 @@
         const cameraNumber = match ? Number(match[1]) : 1;
         const camera = document.getElementById("camera");
         const status = document.getElementById("status");
-        const fpsDisplay = document.getElementById("fps");
-        const title = document.getElementById("title");
-        const cameraLinks = document.getElementById("camera-links");
-
-        title.textContent = `Traffic Camera ${cameraNumber}`;
-        document.title = `Traffic Camera ${cameraNumber}`;
-        cameraLinks.innerHTML = [1, 2, 3, 4].map(number =>
-            `<a class="${number === cameraNumber ? "active" : ""}" href="/camera${number}">Camera ${number}</a>`
-        ).join("");
 
         let socket;
         let previousImageURL = null;
         let reconnectTimer = null;
-        let frames = 0;
-        let lastFPSUpdate = performance.now();
 
         function connect() {
             const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -69,20 +50,11 @@
                 status.textContent = `● CAMERA ${cameraNumber} LIVE`;
                 status.style.color = "#00ff88";
 
-                frames++;
-                const now = performance.now();
-                if (now - lastFPSUpdate >= 1000) {
-                    const fps = frames * 1000 / (now - lastFPSUpdate);
-                    fpsDisplay.textContent = `${fps.toFixed(1)} FPS`;
-                    frames = 0;
-                    lastFPSUpdate = now;
-                }
             };
 
             socket.onclose = () => {
                 status.textContent = "Disconnected — reconnecting...";
                 status.style.color = "red";
-                fpsDisplay.textContent = "0 FPS";
                 clearTimeout(reconnectTimer);
                 reconnectTimer = setTimeout(connect, 3000);
             };
