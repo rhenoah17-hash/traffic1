@@ -1,0 +1,17 @@
+{
+  "name": "traffic",
+  "version": "1.0.0",
+  "description": "ESP32 Traffic Camera WebSocket Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
+  }
+}
