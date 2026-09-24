@@ -5,114 +5,110 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-
 const PORT = process.env.PORT || 3000;
+const CAMERA_COUNT = 4;
 
-// Serve files from /public
+const cameraSockets = new Map();
+const viewersByCamera = new Map();
+
+for (let cameraNumber = 1; cameraNumber <= CAMERA_COUNT; cameraNumber++) {
+    viewersByCamera.set(cameraNumber, new Set());
+}
+
+const viewerPage = path.join(__dirname, "public", "index.html");
+
+// Each URL serves the same viewer; the page reads its camera number from
+// window.location.pathname.
+app.get(/^\/camera([1-4])\/?$/, (req, res) => {
+    res.sendFile(viewerPage);
+});
+
+// Keep the root useful as a small camera selector.
+app.get("/", (req, res) => {
+    const links = Array.from(
+        { length: CAMERA_COUNT },
+        (_, index) => `<li><a href="/camera${index + 1}">Camera ${index + 1}</a></li>`
+    ).join("");
+
+    res.type("html").send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Traffic Cameras</title>
+<style>body{background:#111;color:#eee;font-family:Arial;margin:40px}a{color:#00d9ff;font-size:1.4rem;line-height:2}</style>
+</head><body><h1>Traffic Cameras</h1><ul>${links}</ul></body></html>`);
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
-let cameraSocket = null;
-const viewers = new Set();
-
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({
+    server,
+    perMessageDeflate: false,
+    maxPayload: 256 * 1024
+});
 
 wss.on("connection", (ws, req) => {
+    const pathname = new URL(req.url, "http://localhost").pathname;
+    const cameraMatch = pathname.match(/^\/camera([1-4])\/?$/);
+    const viewerMatch = pathname.match(/^\/viewer([1-4])\/?$/);
 
-    console.log("WebSocket connection:", req.url);
+    if (cameraMatch) {
+        const cameraNumber = Number(cameraMatch[1]);
+        const previousCamera = cameraSockets.get(cameraNumber);
 
-    // ==========================================
-    // ESP32 CAMERA
-    // ==========================================
-    if (req.url === "/camera") {
-
-        console.log("ESP32 camera connected");
-
-        // Only one camera for now
-        if (
-            cameraSocket &&
-            cameraSocket.readyState === WebSocket.OPEN
-        ) {
-            cameraSocket.close();
+        if (previousCamera && previousCamera.readyState === WebSocket.OPEN) {
+            previousCamera.close(1000, "Replaced by a new camera connection");
         }
 
-        cameraSocket = ws;
+        cameraSockets.set(cameraNumber, ws);
+        console.log(`Camera ${cameraNumber} connected`);
 
         ws.on("message", (data, isBinary) => {
+            if (!isBinary) return;
 
-            if (!isBinary) {
-                return;
-            }
-
-            // Forward each JPEG frame to all viewers
+            const viewers = viewersByCamera.get(cameraNumber);
             for (const viewer of viewers) {
+                if (viewer.readyState !== WebSocket.OPEN) continue;
 
-                if (viewer.readyState === WebSocket.OPEN) {
-
-                    // Don't allow a slow viewer to build
-                    // an unlimited queue in memory.
-                    if (viewer.bufferedAmount < 1024 * 1024) {
-                        viewer.send(data, { binary: true });
-                    }
+                // JPEG frames are already compressed. Never queue old frames
+                // for a slow viewer; object detection should receive current data.
+                if (viewer.bufferedAmount === 0) {
+                    viewer.send(data, { binary: true, compress: false });
                 }
             }
         });
 
         ws.on("close", () => {
-
-            console.log("ESP32 camera disconnected");
-
-            if (cameraSocket === ws) {
-                cameraSocket = null;
+            if (cameraSockets.get(cameraNumber) === ws) {
+                cameraSockets.delete(cameraNumber);
             }
+            console.log(`Camera ${cameraNumber} disconnected`);
         });
 
         ws.on("error", (error) => {
-            console.log("Camera error:", error.message);
+            console.error(`Camera ${cameraNumber} error:`, error.message);
         });
-
         return;
     }
 
-    // ==========================================
-    // WEB BROWSER VIEWER
-    // ==========================================
-    if (req.url === "/viewer") {
-
+    if (viewerMatch) {
+        const cameraNumber = Number(viewerMatch[1]);
+        const viewers = viewersByCamera.get(cameraNumber);
         viewers.add(ws);
+        console.log(`Camera ${cameraNumber} viewer connected (${viewers.size} total)`);
 
-        console.log(
-            "Viewer connected. Total viewers:",
-            viewers.size
-        );
-
-        ws.on("close", () => {
-
-            viewers.delete(ws);
-
-            console.log(
-                "Viewer disconnected. Total viewers:",
-                viewers.size
-            );
-        });
-
-        ws.on("error", () => {
-            viewers.delete(ws);
-        });
-
+        const removeViewer = () => viewers.delete(ws);
+        ws.on("close", removeViewer);
+        ws.on("error", removeViewer);
         return;
     }
 
-    // Unknown WebSocket path
-    console.log("Unknown WebSocket path:", req.url);
-    ws.close();
+    console.log("Unknown WebSocket path:", pathname);
+    ws.close(1008, "Unknown camera/viewer path");
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-
-    console.log("----------------------------------");
-    console.log("Traffic Camera Server");
-    console.log("----------------------------------");
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Open: http://localhost:${PORT}`);
-    console.log("----------------------------------");
+    console.log(`Traffic camera server listening on port ${PORT}`);
+    for (let cameraNumber = 1; cameraNumber <= CAMERA_COUNT; cameraNumber++) {
+        console.log(`Camera ${cameraNumber}: http://localhost:${PORT}/camera${cameraNumber}`);
+    }
 });
